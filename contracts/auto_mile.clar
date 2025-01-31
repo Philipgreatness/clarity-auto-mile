@@ -14,7 +14,8 @@
     manufacturer: (string-ascii 50),
     model: (string-ascii 50),
     year: uint,
-    status: (string-ascii 20)
+    status: (string-ascii 20),
+    mileage: uint
   }
 )
 
@@ -27,12 +28,27 @@
     start-date: uint,
     end-date: uint,
     monthly-payment: uint,
-    status: (string-ascii 20)
+    status: (string-ascii 20),
+    mileage-limit: uint
+  }
+)
+
+(define-map maintenance-records
+  { record-id: uint }
+  {
+    vehicle-id: (string-ascii 17),
+    service-date: uint,
+    service-type: (string-ascii 50),
+    provider: principal,
+    mileage: uint,
+    cost: uint,
+    notes: (string-ascii 500)
   }
 )
 
 ;; Storage
 (define-data-var lease-nonce uint u0)
+(define-data-var maintenance-nonce uint u0)
 
 ;; Private functions
 (define-private (is-vehicle-owner (vehicle-id (string-ascii 17)) (caller principal))
@@ -47,20 +63,21 @@
     (vehicle-id (string-ascii 17))
     (manufacturer (string-ascii 50))
     (model (string-ascii 50))
-    (year uint))
+    (year uint)
+    (mileage uint))
   (let ((vehicle-data {
       owner: tx-sender,
       manufacturer: manufacturer,
       model: model,
       year: year,
-      status: "active"
+      status: "active",
+      mileage: mileage
     }))
     (match (map-get? vehicles {vehicle-id: vehicle-id})
       existing-data err-already-exists
       (begin
         (map-set vehicles {vehicle-id: vehicle-id} vehicle-data)
-        (ok true))
-    )
+        (ok true)))
   )
 )
 
@@ -83,7 +100,8 @@
     (lessee principal)
     (start-date uint)
     (end-date uint)
-    (monthly-payment uint))
+    (monthly-payment uint)
+    (mileage-limit uint))
   (let ((lease-id (+ (var-get lease-nonce) u1)))
     (if (is-vehicle-owner vehicle-id tx-sender)
       (begin
@@ -96,10 +114,42 @@
             start-date: start-date,
             end-date: end-date,
             monthly-payment: monthly-payment,
-            status: "active"
+            status: "active",
+            mileage-limit: mileage-limit
           })
         (var-set lease-nonce lease-id)
         (ok lease-id))
+      err-unauthorized))
+)
+
+(define-public (add-maintenance-record
+    (vehicle-id (string-ascii 17))
+    (service-date uint)
+    (service-type (string-ascii 50))
+    (provider principal)
+    (mileage uint)
+    (cost uint)
+    (notes (string-ascii 500)))
+  (let ((record-id (+ (var-get maintenance-nonce) u1)))
+    (if (is-vehicle-owner vehicle-id tx-sender)
+      (begin 
+        (map-set maintenance-records
+          {record-id: record-id}
+          {
+            vehicle-id: vehicle-id,
+            service-date: service-date,
+            service-type: service-type,
+            provider: provider,
+            mileage: mileage,
+            cost: cost,
+            notes: notes
+          })
+        (map-set vehicles 
+          {vehicle-id: vehicle-id}
+          (merge (unwrap! (map-get? vehicles {vehicle-id: vehicle-id}) err-not-found)
+                {mileage: mileage}))
+        (var-set maintenance-nonce record-id)
+        (ok record-id))
       err-unauthorized))
 )
 
@@ -121,5 +171,11 @@
 (define-read-only (get-lease-details (lease-id uint))
   (match (map-get? leases {lease-id: lease-id})
     lease (ok lease)
+    err-not-found)
+)
+
+(define-read-only (get-maintenance-record (record-id uint))
+  (match (map-get? maintenance-records {record-id: record-id})
+    record (ok record)
     err-not-found)
 )
