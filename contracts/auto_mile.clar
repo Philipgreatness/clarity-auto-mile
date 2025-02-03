@@ -5,6 +5,7 @@
 (define-constant err-unauthorized (err u102))
 (define-constant err-already-exists (err u103))
 (define-constant err-invalid-state (err u104))
+(define-constant err-invalid-input (err u105))
 
 ;; Data structures
 (define-map vehicles
@@ -58,6 +59,12 @@
   )
 )
 
+(define-private (validate-dates (start-date uint) (end-date uint))
+  (> end-date start-date))
+
+(define-private (validate-mileage (current-mileage uint) (new-mileage uint))
+  (>= new-mileage current-mileage))
+
 ;; Public functions
 (define-public (register-vehicle 
     (vehicle-id (string-ascii 17))
@@ -92,8 +99,7 @@
           (merge vehicle {owner: new-owner}))
         (ok true))
       err-not-found)
-    err-unauthorized)
-)
+    err-unauthorized))
 
 (define-public (create-lease
     (vehicle-id (string-ascii 17))
@@ -103,7 +109,9 @@
     (monthly-payment uint)
     (mileage-limit uint))
   (let ((lease-id (+ (var-get lease-nonce) u1)))
-    (if (is-vehicle-owner vehicle-id tx-sender)
+    (if (and 
+        (is-vehicle-owner vehicle-id tx-sender)
+        (validate-dates start-date end-date))
       (begin
         (map-set leases
           {lease-id: lease-id}
@@ -119,8 +127,7 @@
           })
         (var-set lease-nonce lease-id)
         (ok lease-id))
-      err-unauthorized))
-)
+      err-invalid-input)))
 
 (define-public (add-maintenance-record
     (vehicle-id (string-ascii 17))
@@ -130,8 +137,11 @@
     (mileage uint)
     (cost uint)
     (notes (string-ascii 500)))
-  (let ((record-id (+ (var-get maintenance-nonce) u1)))
-    (if (is-vehicle-owner vehicle-id tx-sender)
+  (let ((record-id (+ (var-get maintenance-nonce) u1))
+        (current-vehicle (map-get? vehicles {vehicle-id: vehicle-id})))
+    (if (and 
+        (is-vehicle-owner vehicle-id tx-sender)
+        (validate-mileage (get mileage (unwrap! current-vehicle err-not-found)) mileage))
       (begin 
         (map-set maintenance-records
           {record-id: record-id}
@@ -146,36 +156,31 @@
           })
         (map-set vehicles 
           {vehicle-id: vehicle-id}
-          (merge (unwrap! (map-get? vehicles {vehicle-id: vehicle-id}) err-not-found)
+          (merge (unwrap! current-vehicle err-not-found)
                 {mileage: mileage}))
         (var-set maintenance-nonce record-id)
         (ok record-id))
-      err-unauthorized))
-)
+      err-invalid-input)))
 
 (define-public (make-payment (lease-id uint))
   (match (map-get? leases {lease-id: lease-id})
     lease (if (is-eq (get lessee lease) tx-sender)
             (ok true)  ;; In a real implementation, this would handle payment logic
             err-unauthorized)
-    err-not-found)
-)
+    err-not-found))
 
 ;; Read-only functions
 (define-read-only (get-vehicle-details (vehicle-id (string-ascii 17)))
   (match (map-get? vehicles {vehicle-id: vehicle-id})
     vehicle (ok vehicle)
-    err-not-found)
-)
+    err-not-found))
 
 (define-read-only (get-lease-details (lease-id uint))
   (match (map-get? leases {lease-id: lease-id})
     lease (ok lease)
-    err-not-found)
-)
+    err-not-found))
 
 (define-read-only (get-maintenance-record (record-id uint))
   (match (map-get? maintenance-records {record-id: record-id})
     record (ok record)
-    err-not-found)
-)
+    err-not-found))
